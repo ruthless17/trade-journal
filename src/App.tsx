@@ -79,9 +79,16 @@ export default function App() {
     localStorage.setItem('trade_history', JSON.stringify(trades));
   }, [balance, trades]);
 
+    // Resimleri kalıcı Base64 formatına çeviren güvenli dönüştürücü
   const handleImageAdd = useCallback((file: File) => {
-    const imageUrl = URL.createObjectURL(file);
-    setSelectedImages(prev => [...prev, imageUrl]);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const base64String = e.target?.result as string;
+      if (base64String) {
+        setSelectedImages(prev => [...prev, base64String]);
+      }
+    };
+    reader.readAsDataURL(file);
   }, []);
 
   useEffect(() => {
