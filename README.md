@@ -1,6 +1,6 @@
-# ⚡ LacivertFX Trade Journal (`v1.0.0-alpha`)
+# ⚡ LacivertFX Trade Journal (`v1.0.`)
 
-> 🚀 **Sürüm / Version:** `v1.0.0-alpha`  
+> 🚀 **Sürüm / Version:** `v1.0`  
 > ⚠️ **Durum / Status:** Aktif geliştirme aşamasındadır. / Under active development.  
 > 📦 **Direkt İndir / Direct Download:** [Releases / İndirmeler Bölümü](https://github.com/ruthless17/trade-journal/releases)
 
@@ -38,7 +38,7 @@ Hiçbir kodlama veya programlama bilginize gerek yoktur!
 No coding or technical knowledge required!
 
 1. **Download the File:**  
-   Click on the **[Releases](https://github.com/ruthless17/trade-journal/releases)** section on the right side and download the **`trade-journal_1.0.0_x64-setup.exe`** file.
+   Click on the **[Releases](https://github.com/ruthless17/trade-journal/releases)** section on the right side and download the **`trade-journal 1.0`** file.
 
 2. **Run Setup:**  
    Double-click the downloaded `.exe` file and click **Install**.
