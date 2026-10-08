@@ -46,11 +46,12 @@ type FormState = {
 /* ───────────────────────── Sabitler ───────────────────────── */
 
 const POPULAR_ASSETS = [
-  'US30 / Dow Jones', 'NAS100 / NASDAQ', 'US500 / S&P 500', 'RUT / Russell 2000',
+  'US30 / Dow Jones', 'NAS100 / NASDAQ', 'US500 / S&P 500', 'RUT / Russell 2000', 'US2000 / Russell 2000',
   'DAX40 (Almanya)', 'FTSE100 (İngiltere)', 'CAC40 (Fransa)', 'NIKKEI225 (Japonya)', 'HANG SENG (Hong Kong)',
   'EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'USD/CHF',
-  'EUR/GBP', 'EUR/JPY', 'GBP/JPY', 'EUR/AUD', 'AUD/JPY', 'AUD/NZD', 'CAD/JPY', 'CHF/JPY',
+  'EUR/GBP', 'EUR/JPY', 'GBP/JPY', 'EUR/AUD', 'AUD/JPY', 'AUD/NZD', 'CAD/JPY', 'CHF/JPY', 'NZD/JPY',
   'EUR/CAD', 'EUR/CHF', 'EUR/NZD', 'GBP/AUD', 'GBP/CAD', 'GBP/CHF', 'GBP/NZD',
+  'AUD/CAD', 'AUD/CHF', 'NZD/CHF', 'NZD/CAD', 'CAD/CHF',
   'XAU/USD (Altın)', 'XAG/USD (Gümüş)', 'WTI/USD (Ham Petrol)', 'BRENT/USD (Brent Petrol)',
   'XPT/USD (Platin)', 'XPD/USD (Paladyum)', 'NATGAS (Doğalgaz)', 'COPPER (Bakır)',
   'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'AVAX/USDT', 'XRP/USDT', 'DOGE/USDT',
@@ -58,16 +59,15 @@ const POPULAR_ASSETS = [
   'LINK/USDT', 'MATIC/USDT', 'SHIB/USDT', 'FET/USDT', 'APT/USDT', 'AR/USDT',
 ];
 
-const SETUP_SUGGESTIONS = ['Breakout', 'Pullback', 'Reversal', 'Trend takibi', 'Range', 'Haber', 'Liquidity sweep'];
+// "XAG/USD" ve "XAGUSD" aynı şekilde aransın diye bir kez normalize edilir
+const normSearch = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+const ASSET_INDEX = POPULAR_ASSETS.map(name => ({ name, key: normSearch(name) }));
 
+const SETUP_SUGGESTIONS = ['Breakout', 'Pullback', 'Reversal', 'Trend takibi', 'Range', 'Haber', 'Liquidity sweep'];
+const RISK_PRESETS = [0.25, 0.5, 1, 1.5, 2];
 const DEFAULT_ASSET = 'XAG/USD (Gümüş)';
-function emptyForm(): FormState {
-  return {
-    asset: DEFAULT_ASSET, type: 'LONG', entry: 0, exit: 0, stopLoss: 0,
-    leverage: 20, riskPercent: 1, resultStatus: 'TP', setup: '', note: '',
-    date: toLocalInput(new Date()),
-  };
-}
+const STORAGE_BALANCE = 'trade_balance';
+const STORAGE_TRADES = 'trade_history';
 
 const COLORS = { tp: '#38bdf8', sl: '#f43f5e', be: '#f59e0b' };
 const statusColor = (s: ResultStatus) => (s === 'TP' ? COLORS.tp : s === 'SL' ? COLORS.sl : COLORS.be);
@@ -85,6 +85,14 @@ const sortTrades = (ts: Trade[]) => ts.slice().sort((a, b) => b.date.localeCompa
 function toLocalInput(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function emptyForm(): FormState {
+  return {
+    asset: DEFAULT_ASSET, type: 'LONG', entry: 0, exit: 0, stopLoss: 0,
+    leverage: 20, riskPercent: 1, resultStatus: 'TP', setup: '', note: '',
+    date: toLocalInput(new Date()),
+  };
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -108,22 +116,19 @@ const normalizeTrade = (t: any): Trade => ({
 // Ekran görüntüsünü küçültüp JPEG'e çevirir: localStorage kotası dolmasın diye
 const compressImage = (file: File, maxW = 1280, quality = 0.72) =>
   new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = reject;
-      img.onload = () => {
-        const scale = Math.min(1, maxW / img.width);
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      };
-      img.src = reader.result as string;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('img')); };
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', quality));
     };
-    reader.readAsDataURL(file);
+    img.src = url;
   });
 
 const downloadFile = (name: string, content: string, mime: string) => {
@@ -132,7 +137,7 @@ const downloadFile = (name: string, content: string, mime: string) => {
   a.href = url;
   a.download = name;
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 // Sayıyı yumuşakça yeni değere kaydırır
@@ -146,8 +151,7 @@ function useCountUp(target: number, duration = 650) {
     let raf = 0;
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / duration);
-      const eased = 1 - Math.pow(1 - p, 3);
-      current.current = from + (target - from) * eased;
+      current.current = from + (target - from) * (1 - Math.pow(1 - p, 3));
       setVal(current.current);
       if (p < 1) raf = requestAnimationFrame(tick);
     };
@@ -166,11 +170,13 @@ function computeTrade(baseBalance: number, f: FormState) {
   const long = f.type === 'LONG';
   if (long && f.stopLoss >= f.entry) return { ...out, error: 'LONG işlemde stop, girişin altında olmalı.' };
   if (!long && f.stopLoss <= f.entry) return { ...out, error: 'SHORT işlemde stop, girişin üstünde olmalı.' };
+  if (!(f.riskPercent > 0)) return { ...out, error: 'Risk yüzdesi 0’dan büyük olmalı.' };
+  if (!(f.leverage >= 1)) return { ...out, error: 'Kaldıraç en az 1 olmalı.' };
 
   const riskAmount = baseBalance * (f.riskPercent / 100);
   const stopPct = Math.abs(f.entry - f.stopLoss) / f.entry;
   const positionSize = riskAmount / stopPct;
-  const margin = f.leverage > 0 ? positionSize / f.leverage : 0;
+  const margin = positionSize / f.leverage;
 
   let pnl = 0;
   let rr = 0;
@@ -228,6 +234,7 @@ textarea.lfx-input{resize:vertical;min-height:56px}
 .lfx-btn:disabled{opacity:.45;cursor:not-allowed;filter:none;transform:none}
 .lfx-ghost{background:var(--line);border:1px solid var(--line2);color:var(--blue);padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.75em;display:flex;align-items:center;gap:4px;transition:background .2s}
 .lfx-ghost:hover{background:var(--line2)}
+.lfx-ghost:disabled{opacity:.4;cursor:not-allowed}
 .lfx-trade{background:var(--line);padding:14px 16px;border-radius:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid var(--line2);animation:lfx-slide .35s ease both;transition:border-color .3s,box-shadow .3s,transform .2s}
 .lfx-trade:hover{transform:translateX(-2px)}
 .lfx-trade.hl{border-color:var(--blue);box-shadow:0 0 15px rgba(56,189,248,.4)}
@@ -279,14 +286,236 @@ const StatCard = React.memo(function StatCard({ icon, label, value, format, colo
   );
 });
 
+/* Ondalıklı sayı girişi: 0.5, 1.25, 0,75 gibi değerler sorunsuz yazılır.
+   Yazılan metin kendi içinde tutulur, böylece "0." yazarken nokta silinmez. */
+type NumInputProps = {
+  value: number;
+  onChange: (n: number) => void;
+  placeholder?: string;
+  required?: boolean;
+};
+
+const NumInput = React.memo(function NumInput({ value, onChange, placeholder, required }: NumInputProps) {
+  const [text, setText] = useState(value ? String(value) : '');
+
+  // Dışarıdan değer değişirse (düzenleme, sıfırlama, hızlı butonlar) yazıyı eşitle
+  useEffect(() => {
+    setText(prev => ((parseFloat(prev) || 0) === value ? prev : value ? String(value) : ''));
+  }, [value]);
+
+  return (
+    <input
+      className="lfx-input" type="text" inputMode="decimal" autoComplete="off"
+      value={text} placeholder={placeholder} required={required}
+      onChange={e => {
+        const t = e.target.value.replace(',', '.');
+        if (!/^\d*\.?\d*$/.test(t)) return;
+        setText(t);
+        onChange(parseFloat(t) || 0);
+      }}
+    />
+  );
+});
+
+/* ───── Kasa grafiği (kendi hover state'i var, tüm sayfayı yeniden çizdirmez) ───── */
+
+const CW = 600, CH = 230, PL = 56, PR = 16, PT = 16, PB = 26;
+
+type ChartProps = { series: number[]; chrono: Trade[]; onJump: (id: string) => void };
+
+const EquityChart = React.memo(function EquityChart({ series, chrono, onJump }: ChartProps) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  const chart = useMemo(() => {
+    let max = -Infinity, min = Infinity;
+    for (const v of series) { if (v > max) max = v; if (v < min) min = v; }
+    // Aralık gerçek veriden hesaplanır; böylece küçük hareketler de görünür
+    const pad = (max - min) * 0.18 || Math.abs(max) * 0.01 || 1;
+    const hi = max + pad, lo = min - pad;
+    const n = series.length;
+    const pts = series.map((val, i) => ({
+      x: PL + (n === 1 ? 0 : i / (n - 1)) * (CW - PL - PR),
+      y: PT + ((hi - val) / (hi - lo)) * (CH - PT - PB),
+      val,
+    }));
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    const area = `${line} L${pts[n - 1].x.toFixed(1)} ${CH - PB} L${pts[0].x.toFixed(1)} ${CH - PB} Z`;
+    const ticks = [0, 1, 2, 3].map(i => ({ val: hi - ((hi - lo) * i) / 3, y: PT + (i / 3) * (CH - PT - PB) }));
+    return { pts, line, area, ticks };
+  }, [series]);
+
+  const onMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * CW;
+    let best = 0, bd = Infinity;
+    chart.pts.forEach((p, i) => { const d = Math.abs(p.x - x); if (d < bd) { bd = d; best = i; } });
+    setHoverIdx(prev => (prev === best ? prev : best));
+  }, [chart]);
+
+  const hp = hoverIdx !== null ? chart.pts[hoverIdx] : null;
+  const hoverTrade = hoverIdx !== null && hoverIdx > 0 ? chrono[hoverIdx - 1] : null;
+
+  return (
+    <svg key={series.length} viewBox={`0 0 ${CW} ${CH}`} style={{ width: '100%', display: 'block' }}
+      onMouseMove={onMove} onMouseLeave={() => setHoverIdx(null)}>
+      <defs>
+        <linearGradient id="lfx-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#38bdf8" stopOpacity=".35" />
+          <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {chart.ticks.map((t, i) => (
+        <g key={i}>
+          <line x1={PL} x2={CW - PR} y1={t.y} y2={t.y} stroke="#1e293b" strokeDasharray="3 4" />
+          <text x={PL - 8} y={t.y + 4} textAnchor="end" fontSize="11" fill="#64748b">{t.val.toFixed(0)}</text>
+        </g>
+      ))}
+      <path className="lfx-chart-area" d={chart.area} fill="url(#lfx-grad)" />
+      <path className="lfx-chart-line" d={chart.line} pathLength={1} fill="none" stroke="#38bdf8" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      {chart.pts.map((p, i) => {
+        const prev = chart.pts[i - 1]?.val ?? p.val;
+        return (
+          <circle key={i} cx={p.x} cy={p.y} r={hoverIdx === i ? 6 : 3.5}
+            fill={i === 0 ? '#94a3b8' : p.val >= prev ? '#38bdf8' : '#f43f5e'} stroke="#0b1329" strokeWidth="1.5"
+            style={{ transition: 'r .12s', cursor: i > 0 ? 'pointer' : 'default' }}
+            onClick={() => { if (i > 0) onJump(chrono[i - 1].id); }} />
+        );
+      })}
+      {hp && (
+        <g pointerEvents="none">
+          <line x1={hp.x} x2={hp.x} y1={PT} y2={CH - PB} stroke="#475569" strokeDasharray="3 3" />
+          <g transform={`translate(${Math.min(Math.max(hp.x - 75, PL), CW - PR - 150)},${PT})`}>
+            <rect width="150" height="42" rx="8" fill="#0f172a" stroke="#334155" />
+            <text x="10" y="17" fontSize="11" fill="#94a3b8">{hoverTrade ? hoverTrade.asset.slice(0, 22) : 'Başlangıç'}</text>
+            <text x="10" y="34" fontSize="13" fontWeight="700" fill="#f8fafc">
+              {money(hp.val)}{hoverTrade ? `  (${signedMoney(hoverTrade.pnl)})` : ''}
+            </text>
+          </g>
+        </g>
+      )}
+    </svg>
+  );
+});
+
+/* ───── PnL takvimi ───── */
+
+const WEEKDAYS = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+
+const PnlCalendar = React.memo(function PnlCalendar({ trades }: { trades: Trade[] }) {
+  const [monthOffset, setMonthOffset] = useState(0);
+
+  const cal = useMemo(() => {
+    const now = new Date();
+    const base = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+    const y = base.getFullYear(), m = base.getMonth();
+    const map: Record<number, number> = {};
+    for (const t of trades) {
+      const d = new Date(t.date);
+      if (d.getFullYear() === y && d.getMonth() === m) map[d.getDate()] = (map[d.getDate()] || 0) + t.pnl;
+    }
+    const vals = Object.values(map);
+    return {
+      label: base.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }),
+      days: new Date(y, m + 1, 0).getDate(),
+      offset: (base.getDay() + 6) % 7, // hafta Pazartesi başlar
+      map,
+      maxAbs: Math.max(1, ...vals.map(Math.abs)),
+      total: vals.reduce((a, b) => a + b, 0),
+    };
+  }, [trades, monthOffset]);
+
+  return (
+    <div className="lfx-card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h3 className="lfx-title" style={{ margin: 0 }}><Calendar size={15} color="#38bdf8" /> Günlük PnL takvimi</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '.8em' }}>
+          <button className="lfx-ghost" onClick={() => setMonthOffset(o => o - 1)}>‹</button>
+          <span style={{ minWidth: 110, textAlign: 'center', textTransform: 'capitalize' }}>{cal.label}</span>
+          <button className="lfx-ghost" onClick={() => setMonthOffset(o => o + 1)} disabled={monthOffset >= 0}>›</button>
+        </div>
+      </div>
+      <div className="lfx-cal" style={{ marginBottom: 4 }}>
+        {WEEKDAYS.map(d => <div key={d} style={{ fontSize: '.65em', color: 'var(--dim)', textAlign: 'center' }}>{d}</div>)}
+      </div>
+      <div className="lfx-cal">
+        {Array.from({ length: cal.offset }).map((_, i) => <div key={`e${i}`} />)}
+        {Array.from({ length: cal.days }).map((_, i) => {
+          const day = i + 1, v = cal.map[day];
+          const bg = v === undefined ? undefined
+            : `rgba(${v >= 0 ? '56,189,248' : '244,63,94'},${0.18 + 0.6 * Math.min(1, Math.abs(v) / cal.maxAbs)})`;
+          return (
+            <div key={day} className="lfx-cal-d" style={bg ? { background: bg, color: '#f8fafc' } : undefined} title={v !== undefined ? signedMoney(v) : ''}>
+              <span>{day}</span>
+              {v !== undefined && <strong style={{ fontSize: '1.05em', alignSelf: 'flex-end' }}>{v > 0 ? '+' : ''}{Math.round(v)}</strong>}
+            </div>
+          );
+        })}
+      </div>
+      <div className="lfx-sub" style={{ marginTop: 10 }}>Ay toplamı: <strong style={{ color: pnlColor(cal.total) }}>{signedMoney(cal.total)}</strong></div>
+    </div>
+  );
+});
+
+/* ───── İşlem satırı (sadece kendi verisi değişince yeniden çizilir) ───── */
+
+type RowProps = {
+  trade: Trade;
+  highlighted: boolean;
+  registerRef: (id: string, node: HTMLDivElement | null) => void;
+  onEdit: (t: Trade) => void;
+  onDelete: (id: string) => void;
+  onImage: (src: string) => void;
+};
+
+const TradeRow = React.memo(function TradeRow({ trade: t, highlighted, registerRef, onEdit, onDelete, onImage }: RowProps) {
+  return (
+    <div ref={node => registerRef(t.id, node)} className={`lfx-trade ${highlighted ? 'hl' : ''}`}
+      style={{ borderLeft: `4px solid ${statusColor(t.resultStatus)}` }}>
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center', minWidth: 0 }}>
+        {t.imagePaths?.length ? (
+          <div style={{ display: 'flex', gap: 4 }}>
+            {t.imagePaths.map((img, i) => <img key={i} src={img} alt="SS" className="lfx-thumb" loading="lazy" decoding="async" onClick={() => onImage(img)} />)}
+          </div>
+        ) : (
+          <div style={{ width: 42, height: 36, background: 'var(--card)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: '.65em' }}>Yok</div>
+        )}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 2, flexWrap: 'wrap' }}>
+            <strong style={{ fontSize: '.9em' }}>{t.asset}</strong>
+            <span style={{ color: t.type === 'LONG' ? COLORS.tp : COLORS.sl, fontSize: '.75em', fontWeight: 'bold' }}>{t.type}</span>
+            <span style={{ background: 'rgba(255,255,255,.05)', color: statusColor(t.resultStatus), padding: '2px 6px', borderRadius: 4, fontSize: '.7em', fontWeight: 'bold' }}>
+              {t.resultStatus === 'BE' ? 'Entry stop' : t.resultStatus}
+            </span>
+            {t.setup && <span style={{ color: 'var(--mut)', border: '1px solid var(--line2)', padding: '1px 6px', borderRadius: 10, fontSize: '.68em' }}>{t.setup}</span>}
+          </div>
+          <div style={{ fontSize: '.78em', color: 'var(--mut)' }}>
+            EP: {t.entryPrice} | SL: {t.stopLossPrice} | TP: {t.exitPrice || '-'} · {new Date(t.date).toLocaleDateString('tr-TR')} · risk %{t.riskPercent}
+          </div>
+          {t.note && <div style={{ fontSize: '.74em', color: 'var(--dim)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 380 }} title={t.note}>📝 {t.note}</div>}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontWeight: 800, color: pnlColor(t.pnl), fontVariantNumeric: 'tabular-nums' }}>{signedMoney(t.pnl)}</div>
+          <div style={{ fontSize: '.72em', color: 'var(--dim)' }}>{t.rr}R</div>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button className="lfx-icon-btn" style={{ color: 'var(--blue)' }} onClick={() => onEdit(t)} title="Düzenle"><Edit3 size={14} /></button>
+          <button className="lfx-icon-btn" style={{ color: 'var(--red)' }} onClick={() => onDelete(t.id)} title="Sil"><Trash2 size={14} /></button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 /* ───────────────────────── Ana uygulama ───────────────────────── */
 
 export default function App() {
-  const [balance, setBalance] = useState<number>(() => load<number>('trade_balance', 2000));
-  const [trades, setTrades] = useState<Trade[]>(() => sortTrades(load<any[]>('trade_history', []).map(normalizeTrade)));
+  const [balance, setBalance] = useState<number>(() => load<number>(STORAGE_BALANCE, 2000));
+  const [trades, setTrades] = useState<Trade[]>(() => sortTrades(load<any[]>(STORAGE_TRADES, []).map(normalizeTrade)));
 
   const [form, setForm] = useState<FormState>(emptyForm);
-  const [assetSearch, setAssetSearch] = useState(DEFAULT_ASSET);
   const [isAssetOpen, setIsAssetOpen] = useState(false);
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -298,8 +527,6 @@ export default function App() {
   const [balanceInput, setBalanceInput] = useState('');
   const [filter, setFilter] = useState<Filter>('ALL');
   const [listSearch, setListSearch] = useState('');
-  const [monthOffset, setMonthOffset] = useState(0);
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [toast, setToast] = useState('');
 
   const tradeRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -307,24 +534,55 @@ export default function App() {
   const importRef = useRef<HTMLInputElement | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
+  // Callback'ler sabit kalsın diye en güncel değerler ref'te tutulur
+  const tradesRef = useRef(trades);
+  tradesRef.current = trades;
+  const editingRef = useRef(editingId);
+  editingRef.current = editingId;
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(''), 2600);
   }, []);
 
-  /* Kayıt: yazmayı biraz geciktirir, kota dolarsa uyarır */
+  /* Kayıt: her şeyi aynı anda yazmaz. İşlemler ve kasa ayrı, gecikmeli yazılır.
+     Pencere kapanırken bekleyen kayıt anında yazılır. */
+  const persist = useCallback((key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      showToast('Depolama dolu. Eski işlemlerin ekran görüntülerini silin veya yedek alın.');
+    }
+  }, [showToast]);
+
+  const pending = useRef<{ balance?: number; trades?: Trade[] }>({});
+  const flush = useCallback(() => {
+    const p = pending.current;
+    if (p.balance !== undefined) persist(STORAGE_BALANCE, String(p.balance));
+    if (p.trades !== undefined) persist(STORAGE_TRADES, JSON.stringify(p.trades));
+    pending.current = {};
+  }, [persist]);
+
+  const firstRun = useRef(true);
   useEffect(() => {
-    const id = window.setTimeout(() => {
-      try {
-        localStorage.setItem('trade_balance', String(balance));
-        localStorage.setItem('trade_history', JSON.stringify(trades));
-      } catch {
-        showToast('Depolama dolu. Eski işlemlerin ekran görüntülerini silin veya yedek alın.');
-      }
-    }, 300);
+    if (firstRun.current) return;
+    pending.current.balance = balance;
+    const id = window.setTimeout(flush, 300);
     return () => window.clearTimeout(id);
-  }, [balance, trades, showToast]);
+  }, [balance, flush]);
+
+  useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return; }
+    pending.current.trades = trades;
+    const id = window.setTimeout(flush, 300);
+    return () => window.clearTimeout(id);
+  }, [trades, flush]);
+
+  useEffect(() => {
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, [flush]);
 
   /* Resim ekleme (sıkıştırarak) */
   const handleImageAdd = useCallback(async (file: File) => {
@@ -337,8 +595,8 @@ export default function App() {
   }, [showToast]);
 
   useEffect(() => {
+    if (!hoverDrop) return;
     const onPaste = (e: ClipboardEvent) => {
-      if (!hoverDrop) return;
       const items = e.clipboardData?.items;
       if (!items) return;
       for (let i = 0; i < items.length; i++) {
@@ -356,7 +614,7 @@ export default function App() {
     const onDown = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setIsAssetOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setModalImage(null); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setModalImage(null); setIsAssetOpen(false); } };
     document.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {
@@ -365,21 +623,74 @@ export default function App() {
     };
   }, []);
 
-  /* Düzenleme sırasında risk, eski işlemin PnL'i çıkarılmış kasa üzerinden hesaplanır */
+  /* ───── Hesaplamalar ───── */
   const editingTrade = useMemo(() => trades.find(t => t.id === editingId) || null, [trades, editingId]);
+
   // Risk, işlemin tarihindeki kasadan hesaplanır (geçmiş güne eklerken de doğru çalışır)
-  const startBalance = useMemo(() => balance - trades.reduce((s, t) => s + t.pnl, 0), [balance, trades]);
   const baseBalance = useMemo(() => {
+    let total = 0;
+    for (const t of trades) total += t.pnl;
     const ts = form.date ? new Date(form.date).getTime() : Date.now();
-    return startBalance + trades.reduce(
-      (s, t) => (t.id !== editingId && new Date(t.date).getTime() < ts ? s + t.pnl : s), 0);
-  }, [startBalance, trades, editingId, form.date]);
+    let b = balance - total; // başlangıç kasası
+    for (const t of trades) {
+      if (t.id !== editingId && new Date(t.date).getTime() < ts) b += t.pnl;
+    }
+    return b;
+  }, [balance, trades, editingId, form.date]);
+
   const calc = useMemo(() => computeTrade(baseBalance, form), [baseBalance, form]);
   const marginTooHigh = calc.margin > baseBalance && baseBalance > 0;
 
+  // Tüm istatistikler tek geçişte hesaplanır
+  const analytics = useMemo(() => {
+    const chrono = trades.slice().reverse();
+    let totalPnl = 0, grossProfit = 0, grossLoss = 0, totalRR = 0;
+    let wins = 0, losses = 0, best = -Infinity, worst = Infinity;
+    for (const t of trades) {
+      totalPnl += t.pnl;
+      totalRR += t.rr;
+      if (t.pnl > 0) { wins++; grossProfit += t.pnl; } else if (t.pnl < 0) { losses++; grossLoss -= t.pnl; }
+      if (t.pnl > best) best = t.pnl;
+      if (t.pnl < worst) worst = t.pnl;
+    }
+    const start = balance - totalPnl;
+    const series = [start];
+    let v = start;
+    for (const t of chrono) { v += t.pnl; series.push(v); }
+
+    let peak = series[0], maxDD = 0, maxDDPct = 0;
+    for (const val of series) {
+      if (val > peak) peak = val;
+      const dd = peak - val;
+      if (dd > maxDD) { maxDD = dd; maxDDPct = peak > 0 ? (dd / peak) * 100 : 0; }
+    }
+
+    let streak = 0, sign = 0;
+    for (const t of trades) {
+      if (t.pnl === 0) continue;
+      const s = t.pnl > 0 ? 1 : -1;
+      if (!sign) sign = s;
+      if (s !== sign) break;
+      streak++;
+    }
+
+    const decided = wins + losses;
+    return {
+      chrono, series, start, wins, losses, be: trades.length - decided,
+      winRate: decided ? (wins / decided) * 100 : 0,
+      totalPnl, totalRR,
+      avgRR: trades.length ? totalRR / trades.length : 0,
+      profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0,
+      maxDD, maxDDPct,
+      streak: streak * sign,
+      best: trades.length ? best : 0,
+      worst: trades.length ? worst : 0,
+    };
+  }, [trades, balance]);
+
+  /* ───── Form işlemleri ───── */
   const resetForm = useCallback(() => {
     setForm(emptyForm());
-    setAssetSearch(DEFAULT_ASSET);
     setSelectedImages([]);
     setEditingId(null);
   }, []);
@@ -422,7 +733,7 @@ export default function App() {
     resetForm();
   };
 
-  const handleEdit = (t: Trade) => {
+  const handleEdit = useCallback((t: Trade) => {
     setEditingId(t.id);
     setForm({
       date: toLocalInput(new Date(t.date)),
@@ -430,21 +741,25 @@ export default function App() {
       stopLoss: t.stopLossPrice || 0, leverage: t.leverage, riskPercent: t.riskPercent,
       resultStatus: t.resultStatus, setup: t.setup || '', note: t.note || '',
     });
-    setAssetSearch(t.asset);
     setSelectedImages(t.imagePaths || []);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, []);
 
-  const handleDelete = (id: string) => {
-    const t = trades.find(x => x.id === id);
+  const handleDelete = useCallback((id: string) => {
+    const t = tradesRef.current.find(x => x.id === id);
     if (!t || !window.confirm(`${t.asset} işlemi silinsin mi? Kasa buna göre geri alınır.`)) return;
     setBalance(b => b - t.pnl);
     setTrades(ts => ts.filter(x => x.id !== id));
-    if (editingId === id) resetForm();
+    if (editingRef.current === id) resetForm();
     showToast('İşlem silindi');
-  };
+  }, [resetForm, showToast]);
 
-  const jumpToTrade = (id: string) => {
+  const registerRef = useCallback((id: string, node: HTMLDivElement | null) => {
+    if (node) tradeRefs.current[id] = node;
+    else delete tradeRefs.current[id];
+  }, []);
+
+  const jumpToTrade = useCallback((id: string) => {
     setFilter('ALL');
     setListSearch('');
     requestAnimationFrame(() => {
@@ -452,6 +767,11 @@ export default function App() {
       setHighlightedId(id);
       window.setTimeout(() => setHighlightedId(null), 2000);
     });
+  }, []);
+
+  const saveBalance = () => {
+    const val = Number(balanceInput);
+    if (balanceInput !== '' && !isNaN(val)) { setBalance(val); setIsEditingBalance(false); }
   };
 
   /* ───── Yedekleme ───── */
@@ -464,7 +784,7 @@ export default function App() {
   const exportCSV = () => {
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const head = ['Tarih', 'Piyasa', 'Yön', 'Giriş', 'Stop', 'Hedef', 'Kaldıraç', 'Risk %', 'Sonuç', 'PnL', 'RR', 'Setup', 'Not'];
-    const rows = trades.slice().reverse().map(t => [
+    const rows = analytics.chrono.map(t => [
       new Date(t.date).toLocaleString('tr-TR'), t.asset, t.type, t.entryPrice, t.stopLossPrice, t.exitPrice,
       t.leverage, t.riskPercent, t.resultStatus, t.pnl.toFixed(2), t.rr, t.setup, t.note,
     ].map(esc).join(','));
@@ -486,107 +806,11 @@ export default function App() {
     }
   };
 
-  /* ───── Analizler ───── */
-  const analytics = useMemo(() => {
-    const chrono = trades.slice().reverse();
-    const start = balance - trades.reduce((s, t) => s + t.pnl, 0);
-    const series = [start];
-    let v = start;
-    chrono.forEach(t => { v += t.pnl; series.push(v); });
-
-    const wins = trades.filter(t => t.pnl > 0);
-    const losses = trades.filter(t => t.pnl < 0);
-    const be = trades.length - wins.length - losses.length;
-    const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
-    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
-    const totalPnl = grossProfit - grossLoss;
-    const totalRR = trades.reduce((s, t) => s + t.rr, 0);
-    const decided = wins.length + losses.length;
-
-    let peak = series[0], maxDD = 0, maxDDPct = 0;
-    series.forEach(val => {
-      peak = Math.max(peak, val);
-      const dd = peak - val;
-      if (dd > maxDD) { maxDD = dd; maxDDPct = peak > 0 ? (dd / peak) * 100 : 0; }
-    });
-
-    let streak = 0, sign = 0;
-    for (const t of trades) {
-      if (t.pnl === 0) continue;
-      const s = t.pnl > 0 ? 1 : -1;
-      if (!sign) sign = s;
-      if (s !== sign) break;
-      streak++;
-    }
-
-    return {
-      chrono, series, start,
-      wins: wins.length, losses: losses.length, be,
-      winRate: decided ? (wins.length / decided) * 100 : 0,
-      totalPnl, totalRR,
-      avgRR: trades.length ? totalRR / trades.length : 0,
-      profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0,
-      maxDD, maxDDPct,
-      streak: streak * sign,
-      best: trades.length ? Math.max(...trades.map(t => t.pnl)) : 0,
-      worst: trades.length ? Math.min(...trades.map(t => t.pnl)) : 0,
-    };
-  }, [trades, balance]);
-
-  /* ───── Kasa grafiği ───── */
-  const W = 600, H = 230, PL = 56, PR = 16, PT = 16, PB = 26;
-  const chart = useMemo(() => {
-    const { series } = analytics;
-    const max = Math.max(...series), min = Math.min(...series);
-    // Aralık gerçek veriden hesaplanır; böylece küçük hareketler de görünür
-    const pad = (max - min) * 0.18 || Math.abs(max) * 0.01 || 1;
-    const hi = max + pad, lo = min - pad;
-    const n = series.length;
-    const pts = series.map((val, i) => ({
-      x: PL + (n === 1 ? 0 : i / (n - 1)) * (W - PL - PR),
-      y: PT + ((hi - val) / (hi - lo)) * (H - PT - PB),
-      val,
-    }));
-    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-    const area = `${line} L${pts[n - 1].x.toFixed(1)} ${H - PB} L${pts[0].x.toFixed(1)} ${H - PB} Z`;
-    const ticks = [0, 1, 2, 3].map(i => ({ val: hi - ((hi - lo) * i) / 3, y: PT + (i / 3) * (H - PT - PB) }));
-    return { pts, line, area, ticks };
-  }, [analytics]);
-
-  const onChartMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * W;
-    let best = 0, bd = Infinity;
-    chart.pts.forEach((p, i) => { const d = Math.abs(p.x - x); if (d < bd) { bd = d; best = i; } });
-    setHoverIdx(best);
-  };
-
-  /* ───── Takvim ───── */
-  const cal = useMemo(() => {
-    const now = new Date();
-    const base = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-    const y = base.getFullYear(), m = base.getMonth();
-    const map: Record<number, number> = {};
-    trades.forEach(t => {
-      const d = new Date(t.date);
-      if (d.getFullYear() === y && d.getMonth() === m) map[d.getDate()] = (map[d.getDate()] || 0) + t.pnl;
-    });
-    const vals = Object.values(map);
-    return {
-      label: base.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }),
-      days: new Date(y, m + 1, 0).getDate(),
-      offset: (base.getDay() + 6) % 7, // hafta Pazartesi başlar
-      map,
-      maxAbs: Math.max(1, ...vals.map(Math.abs)),
-      total: vals.reduce((a, b) => a + b, 0),
-    };
-  }, [trades, monthOffset]);
-
   /* ───── Liste filtreleri ───── */
-  const filteredAssets = useMemo(
-    () => POPULAR_ASSETS.filter(a => a.toLowerCase().includes(assetSearch.toLowerCase())),
-    [assetSearch],
-  );
+  const filteredAssets = useMemo(() => {
+    const q = normSearch(form.asset);
+    return ASSET_INDEX.filter(a => a.key.includes(q));
+  }, [form.asset]);
 
   const visibleTrades = useMemo(() => {
     const q = listSearch.trim().toLowerCase();
@@ -597,8 +821,6 @@ export default function App() {
   }, [trades, filter, listSearch]);
 
   const animatedBalance = useCountUp(balance);
-  const hp = hoverIdx !== null ? chart.pts[hoverIdx] : null;
-  const hoverTrade = hoverIdx !== null && hoverIdx > 0 ? analytics.chrono[hoverIdx - 1] : null;
 
   /* ───────────────────────── Render ───────────────────────── */
   return (
@@ -642,12 +864,8 @@ export default function App() {
             <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
               <input type="number" className="lfx-input" style={{ padding: '6px 8px' }} value={balanceInput} autoFocus
                 onChange={e => setBalanceInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') (e.currentTarget.nextSibling as HTMLButtonElement)?.click(); }} />
-              <button className="lfx-btn" style={{ background: 'var(--blue)', color: '#0f172a', padding: '0 10px' }}
-                onClick={() => {
-                  const val = Number(balanceInput);
-                  if (balanceInput !== '' && !isNaN(val)) { setBalance(val); setIsEditingBalance(false); }
-                }}>
+                onKeyDown={e => { if (e.key === 'Enter') saveBalance(); }} />
+              <button className="lfx-btn" style={{ background: 'var(--blue)', color: '#0f172a', padding: '0 10px' }} onClick={saveBalance}>
                 <Check size={16} />
               </button>
             </div>
@@ -696,6 +914,7 @@ export default function App() {
                 <p style={{ margin: '0 0 4px' }}>• Ekran görüntüsü eklemek için alanın üstüne gelip <strong>Ctrl + V</strong> yap.</p>
                 <p style={{ margin: '0 0 4px' }}>• RR otomatik hesaplanır: TP için hedef/stop oranı, SL için -1R, başa baş için 0R.</p>
                 <p style={{ margin: '0 0 4px' }}>• Risk yüzdesi, işlemin tarihindeki kasadan hesaplanır. Geçmiş güne eklediğinde de doğru çalışır.</p>
+                <p style={{ margin: '0 0 4px' }}>• Risk alanına 0.5 veya 1,25 gibi ondalıklı değer yazabilirsin.</p>
                 <p style={{ margin: 0 }}>• Grafikteki bir noktaya tıklarsan o işlem listede açılır.</p>
               </div>
             )}
@@ -705,9 +924,9 @@ export default function App() {
                 <div className="lfx-row">
                   <div style={{ flex: 1, position: 'relative' }}>
                     <Search size={15} style={{ position: 'absolute', left: 12, top: 14, color: 'var(--dim)' }} />
-                    <input className="lfx-input" style={{ paddingLeft: 38 }} type="text" value={assetSearch} placeholder="Piyasa ara (örn: XAG/USD)"
-                      onFocus={() => setIsAssetOpen(true)}
-                      onChange={e => { setAssetSearch(e.target.value); setForm(f => ({ ...f, asset: e.target.value })); setIsAssetOpen(true); }} />
+                    <input className="lfx-input" style={{ paddingLeft: 38 }} type="text" value={form.asset} placeholder="Piyasa ara (örn: XAGUSD)"
+                      onFocus={e => { e.target.select(); setIsAssetOpen(true); }}
+                      onChange={e => { const val = e.target.value; setForm(f => ({ ...f, asset: val })); setIsAssetOpen(true); }} />
                   </div>
                   <select className="lfx-input" style={{ flex: '0 0 112px', cursor: 'pointer', fontWeight: 'bold', color: form.type === 'LONG' ? COLORS.tp : COLORS.sl }}
                     value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as 'LONG' | 'SHORT' }))}>
@@ -720,7 +939,7 @@ export default function App() {
                     {filteredAssets.length === 0
                       ? <div style={{ color: 'var(--dim)', textAlign: 'center', cursor: 'default' }}>Listede yok, yazdığın isim kullanılır</div>
                       : filteredAssets.map(item => (
-                        <div key={item} onClick={() => { setForm(f => ({ ...f, asset: item })); setAssetSearch(item); setIsAssetOpen(false); }}>{item}</div>
+                        <div key={item.name} onClick={() => { setForm(f => ({ ...f, asset: item.name })); setIsAssetOpen(false); }}>{item.name}</div>
                       ))}
                   </div>
                 )}
@@ -732,26 +951,27 @@ export default function App() {
 
               <div className="lfx-row">
                 <div className="lfx-field"><label>Giriş fiyatı</label>
-                  <input className="lfx-input" type="number" step="any" value={form.entry || ''} placeholder="61.3" required
-                    onChange={e => setForm(f => ({ ...f, entry: Number(e.target.value) }))} /></div>
+                  <NumInput value={form.entry} placeholder="61.3" required onChange={n => setForm(f => ({ ...f, entry: n }))} /></div>
                 <div className="lfx-field"><label>Stop fiyatı</label>
-                  <input className="lfx-input" type="number" step="any" value={form.stopLoss || ''} placeholder="60.5" required
-                    onChange={e => setForm(f => ({ ...f, stopLoss: Number(e.target.value) }))} /></div>
+                  <NumInput value={form.stopLoss} placeholder="60.5" required onChange={n => setForm(f => ({ ...f, stopLoss: n }))} /></div>
               </div>
 
               <div className="lfx-row">
                 <div className="lfx-field"><label>Hedef fiyat {form.resultStatus === 'TP' ? '' : '(opsiyonel)'}</label>
-                  <input className="lfx-input" type="number" step="any" value={form.exit || ''} placeholder="63.0" required={form.resultStatus === 'TP'}
-                    onChange={e => setForm(f => ({ ...f, exit: Number(e.target.value) }))} /></div>
+                  <NumInput value={form.exit} placeholder="63.0" required={form.resultStatus === 'TP'} onChange={n => setForm(f => ({ ...f, exit: n }))} /></div>
                 <div className="lfx-field"><label>Kaldıraç</label>
-                  <input className="lfx-input" type="number" value={form.leverage || ''} placeholder="20" required min={1}
-                    onChange={e => setForm(f => ({ ...f, leverage: Number(e.target.value) }))} /></div>
+                  <NumInput value={form.leverage} placeholder="20" required onChange={n => setForm(f => ({ ...f, leverage: n }))} /></div>
               </div>
 
               <div className="lfx-row">
                 <div className="lfx-field"><label>Riske edilen kasa (%)</label>
-                  <input className="lfx-input" type="number" step="any" min={0} value={form.riskPercent} required
-                    onChange={e => setForm(f => ({ ...f, riskPercent: Number(e.target.value) }))} /></div>
+                  <NumInput value={form.riskPercent} placeholder="0.5" required onChange={n => setForm(f => ({ ...f, riskPercent: n }))} />
+                  <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                    {RISK_PRESETS.map(p => (
+                      <button key={p} type="button" className={`lfx-chip ${form.riskPercent === p ? 'on' : ''}`}
+                        onClick={() => setForm(f => ({ ...f, riskPercent: p }))}>{p}</button>
+                    ))}
+                  </div></div>
                 <div className="lfx-field"><label>İşlem sonucu</label>
                   <select className="lfx-input" style={{ cursor: 'pointer', fontWeight: 'bold', color: statusColor(form.resultStatus) }}
                     value={form.resultStatus} onChange={e => setForm(f => ({ ...f, resultStatus: e.target.value as ResultStatus }))}>
@@ -817,79 +1037,13 @@ export default function App() {
               {trades.length === 0 ? (
                 <div style={{ color: 'var(--dim)', fontSize: '.8em', textAlign: 'center', padding: '50px 0' }}>İlk işlemini kaydet, kasa eğrin burada çizilsin.</div>
               ) : (
-                <svg key={trades.length} viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}
-                  onMouseMove={onChartMove} onMouseLeave={() => setHoverIdx(null)}>
-                  <defs>
-                    <linearGradient id="lfx-grad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#38bdf8" stopOpacity=".35" />
-                      <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
-                    </linearGradient>
-                  </defs>
-                  {chart.ticks.map((t, i) => (
-                    <g key={i}>
-                      <line x1={PL} x2={W - PR} y1={t.y} y2={t.y} stroke="#1e293b" strokeDasharray="3 4" />
-                      <text x={PL - 8} y={t.y + 4} textAnchor="end" fontSize="11" fill="#64748b">{t.val.toFixed(0)}</text>
-                    </g>
-                  ))}
-                  <path className="lfx-chart-area" d={chart.area} fill="url(#lfx-grad)" />
-                  <path className="lfx-chart-line" d={chart.line} pathLength={1} fill="none" stroke="#38bdf8" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-                  {chart.pts.map((p, i) => {
-                    const prev = chart.pts[i - 1]?.val ?? p.val;
-                    return (
-                      <circle key={i} cx={p.x} cy={p.y} r={hoverIdx === i ? 6 : 3.5}
-                        fill={i === 0 ? '#94a3b8' : p.val >= prev ? '#38bdf8' : '#f43f5e'} stroke="#0b1329" strokeWidth="1.5"
-                        style={{ transition: 'r .12s', cursor: i > 0 ? 'pointer' : 'default' }}
-                        onClick={() => { if (i > 0) jumpToTrade(analytics.chrono[i - 1].id); }} />
-                    );
-                  })}
-                  {hp && (
-                    <g pointerEvents="none">
-                      <line x1={hp.x} x2={hp.x} y1={PT} y2={H - PB} stroke="#475569" strokeDasharray="3 3" />
-                      <g transform={`translate(${Math.min(Math.max(hp.x - 75, PL), W - PR - 150)},${PT})`}>
-                        <rect width="150" height="42" rx="8" fill="#0f172a" stroke="#334155" />
-                        <text x="10" y="17" fontSize="11" fill="#94a3b8">{hoverTrade ? hoverTrade.asset.slice(0, 22) : 'Başlangıç'}</text>
-                        <text x="10" y="34" fontSize="13" fontWeight="700" fill="#f8fafc">
-                          {money(hp.val)}{hoverTrade ? `  (${signedMoney(hoverTrade.pnl)})` : ''}
-                        </text>
-                      </g>
-                    </g>
-                  )}
-                </svg>
+                <EquityChart series={analytics.series} chrono={analytics.chrono} onJump={jumpToTrade} />
               )}
             </div>
           </div>
 
           {/* PNL TAKVİMİ */}
-          <div className="lfx-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <h3 className="lfx-title" style={{ margin: 0 }}><Calendar size={15} color="#38bdf8" /> Günlük PnL takvimi</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '.8em' }}>
-                <button className="lfx-ghost" onClick={() => setMonthOffset(o => o - 1)}>‹</button>
-                <span style={{ minWidth: 110, textAlign: 'center', textTransform: 'capitalize' }}>{cal.label}</span>
-                <button className="lfx-ghost" onClick={() => setMonthOffset(o => o + 1)} disabled={monthOffset >= 0}>›</button>
-              </div>
-            </div>
-            <div className="lfx-cal" style={{ marginBottom: 4 }}>
-              {['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'].map(d => (
-                <div key={d} style={{ fontSize: '.65em', color: 'var(--dim)', textAlign: 'center' }}>{d}</div>
-              ))}
-            </div>
-            <div className="lfx-cal">
-              {Array.from({ length: cal.offset }).map((_, i) => <div key={`e${i}`} />)}
-              {Array.from({ length: cal.days }).map((_, i) => {
-                const day = i + 1, v = cal.map[day];
-                const bg = v === undefined ? undefined
-                  : `rgba(${v >= 0 ? '56,189,248' : '244,63,94'},${0.18 + 0.6 * Math.min(1, Math.abs(v) / cal.maxAbs)})`;
-                return (
-                  <div key={day} className="lfx-cal-d" style={bg ? { background: bg, color: '#f8fafc' } : undefined} title={v !== undefined ? signedMoney(v) : ''}>
-                    <span>{day}</span>
-                    {v !== undefined && <strong style={{ fontSize: '1.05em', alignSelf: 'flex-end' }}>{v > 0 ? '+' : ''}{Math.round(v)}</strong>}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="lfx-sub" style={{ marginTop: 10 }}>Ay toplamı: <strong style={{ color: pnlColor(cal.total) }}>{signedMoney(cal.total)}</strong></div>
-          </div>
+          <PnlCalendar trades={trades} />
         </div>
 
         {/* SAĞ: İŞLEM GEÇMİŞİ */}
@@ -912,43 +1066,8 @@ export default function App() {
                 {trades.length === 0 ? 'Henüz kayıtlı işlem yok. Soldaki formdan ilk işlemini ekle.' : 'Bu filtreyle eşleşen işlem yok.'}
               </p>
             ) : visibleTrades.map(t => (
-              <div key={t.id} ref={node => { tradeRefs.current[t.id] = node; }}
-                className={`lfx-trade ${highlightedId === t.id ? 'hl' : ''}`} style={{ borderLeft: `4px solid ${statusColor(t.resultStatus)}` }}>
-                <div style={{ display: 'flex', gap: 14, alignItems: 'center', minWidth: 0 }}>
-                  {t.imagePaths?.length ? (
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      {t.imagePaths.map((img, i) => <img key={i} src={img} alt="SS" className="lfx-thumb" loading="lazy" onClick={() => setModalImage(img)} />)}
-                    </div>
-                  ) : (
-                    <div style={{ width: 42, height: 36, background: 'var(--card)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: '.65em' }}>Yok</div>
-                  )}
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 2, flexWrap: 'wrap' }}>
-                      <strong style={{ fontSize: '.9em' }}>{t.asset}</strong>
-                      <span style={{ color: t.type === 'LONG' ? COLORS.tp : COLORS.sl, fontSize: '.75em', fontWeight: 'bold' }}>{t.type}</span>
-                      <span style={{ background: 'rgba(255,255,255,.05)', color: statusColor(t.resultStatus), padding: '2px 6px', borderRadius: 4, fontSize: '.7em', fontWeight: 'bold' }}>
-                        {t.resultStatus === 'BE' ? 'Entry stop' : t.resultStatus}
-                      </span>
-                      {t.setup && <span style={{ color: 'var(--mut)', border: '1px solid var(--line2)', padding: '1px 6px', borderRadius: 10, fontSize: '.68em' }}>{t.setup}</span>}
-                    </div>
-                    <div style={{ fontSize: '.78em', color: 'var(--mut)' }}>
-                      EP: {t.entryPrice} | SL: {t.stopLossPrice} | TP: {t.exitPrice || '-'} · {new Date(t.date).toLocaleDateString('tr-TR')}
-                    </div>
-                    {t.note && <div style={{ fontSize: '.74em', color: 'var(--dim)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 380 }} title={t.note}>📝 {t.note}</div>}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 800, color: pnlColor(t.pnl), fontVariantNumeric: 'tabular-nums' }}>{signedMoney(t.pnl)}</div>
-                    <div style={{ fontSize: '.72em', color: 'var(--dim)' }}>{t.rr}R</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <button className="lfx-icon-btn" style={{ color: 'var(--blue)' }} onClick={() => handleEdit(t)} title="Düzenle"><Edit3 size={14} /></button>
-                    <button className="lfx-icon-btn" style={{ color: 'var(--red)' }} onClick={() => handleDelete(t.id)} title="Sil"><Trash2 size={14} /></button>
-                  </div>
-                </div>
-              </div>
+              <TradeRow key={t.id} trade={t} highlighted={highlightedId === t.id} registerRef={registerRef}
+                onEdit={handleEdit} onDelete={handleDelete} onImage={setModalImage} />
             ))}
           </div>
         </div>
